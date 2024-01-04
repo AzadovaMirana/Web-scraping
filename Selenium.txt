@@ -1,0 +1,146 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import NoSuchElementException
+import psycopg2
+import time
+
+while True:
+
+   
+    PATH = 'C:\\Users\\admin\\OneDrive\\Desktop\\chromedriver.exe'
+    service = Service(executable_path=PATH)
+    options = webdriver.ChromeOptions()
+    driver = webdriver.Chrome(service=service, options=options)
+
+    base_url = 'https://books.toscrape.com/catalogue/'
+    total_links = 1000
+
+    book_urls = []
+
+    links_scraped = 0
+    page_number = 1
+
+    while links_scraped < total_links:
+        
+        page_url = f'{base_url}page-{page_number}.html'
+
+        driver.get(page_url)
+        book_elements = driver.find_elements(By.XPATH, "//article[@class='product_pod']")
+
+        for book_element in book_elements:
+            
+            try:
+                book_url_element = book_element.find_element(By.XPATH, ".//h3/a")
+                book_url = book_url_element.get_attribute("href")
+                book_urls.append(book_url)
+                links_scraped += 1
+            except NoSuchElementException:
+                continue
+
+            if links_scraped >= total_links:
+                break
+
+        page_number += 1
+
+    scraped_data = []
+
+    for book_url in book_urls:
+        driver.get(book_url)
+
+        try:
+            title_element = driver.find_element(By.XPATH, ".//h1")
+            title = title_element.text
+        except NoSuchElementException:
+            title = "Title not found"
+
+        try:
+            price_element = driver.find_element(By.XPATH, ".//p[@class='price_color']")
+            price = price_element.text
+        except NoSuchElementException:
+            price = "Price not found"
+
+        try:
+            availability_element = driver.find_element(By.XPATH, ".//p[contains(@class, 'availability')]")
+            availability = availability_element.text.strip()
+        except NoSuchElementException:
+            availability = "Availability not found"
+
+        try:
+            num_in_stock_element = driver.find_element(By.XPATH, ".//p[contains(@class, 'instock')]")
+            num_in_stock_text = num_in_stock_element.text.strip()
+            if "(" in num_in_stock_text and ")" in num_in_stock_text:
+                num_in_stock = num_in_stock_text.split("(")[1].split()[0]
+            else:
+                num_in_stock = "Unknown"
+        except (NoSuchElementException, IndexError):
+            num_in_stock = "Number in stock not found"
+
+        try:
+            rating_element = driver.find_element(By.XPATH, ".//p[contains(@class, 'star-rating')]")
+            rating = rating_element.get_attribute("class").split()[-1]
+        except NoSuchElementException:
+            rating = "Rating not found"
+
+        scraped_data.append((title, price, availability, num_in_stock, rating))
+
+    driver.quit()
+
+    for data in scraped_data:
+        print("Title:", data[0])
+        print("Price:", data[1])
+        print("Availability:", data[2])
+        print("Number in Stock:", data[3])
+        print("Rating:", data[4])
+        print("-" * 50)
+
+    hostname = 'localhost'
+    database = 'new'
+    username = 'postgres'
+    pwd = '123'
+    port_id = '5432'
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(
+            host=hostname,
+            dbname=database,
+            user=username,
+            password=pwd,
+            port=port_id
+        )
+
+        cur = conn.cursor()
+        cur.execute('DROP TABLE IF EXISTS scraped_data')
+
+        create_table_query = '''
+        CREATE TABLE IF NOT EXISTS scraped_data (
+            title TEXT,
+            price TEXT,
+            availability TEXT,
+            num_in_stock TEXT,
+            rating TEXT
+        )
+        '''
+        cur.execute(create_table_query)
+
+        insert_query = '''
+        INSERT INTO scraped_data (title, price, availability, num_in_stock, rating)
+        VALUES (%s, %s, %s, %s, %s)
+        '''
+
+        cur.executemany(insert_query, scraped_data)
+        conn.commit()
+
+    except Exception as error:
+        print(f"Error: {error}")
+
+    finally:
+        
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+    time.sleep(600)
